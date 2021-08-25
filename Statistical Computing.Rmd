@@ -1,0 +1,428 @@
+---
+title: "Statistical Computing from Scratch"
+author: "vincentole"
+output:
+  html_document:
+    toc: yes
+    toc_depth: '2'
+    df_print: paged
+  pdf_document:
+    highlight: breezedark
+    toc: yes
+    toc_depth: 2
+    number_sections: yes
+    df_print: kable
+urlcolor: blue
+---
+
+```{=latex}
+% Adding background color to inline code
+
+\definecolor{codebg}{HTML}{eeeeee}
+\definecolor{codetext}{HTML}{000000}
+\let\textttOrig\texttt
+\renewcommand{\texttt}[1]{\textttOrig{\colorbox{codebg}{\textcolor{codetext}{#1}}}}
+```
+
+
+# Statistical Computing
+
+In this project we look at some methods and tools to perform statistical computing.  
+We will therefore create different optimization, simulation and integration algorithms from scratch.
+
+```{r}
+# Load Packages
+require(tidyverse)
+require(ggplot2)
+```
+
+
+# Part I - Optimization
+
+In this part we will build algorithms to solve the Fréchet distribution. 
+
+```{r}
+# Data:
+#install.packages("evd")
+require(evd)
+n = 50
+set.seed(656)
+data = rfrechet(n, shape=1.8)
+```
+
+## 1. Data/Model inspection
+
+First we define the log-likelihood function and the first and second order derivative.
+We will need these for some of the optimization algorithms.
+
+We then take a look at the sample from the Fréchet distribution.
+
+```{r}
+# Log-likelihood function
+ll <- function(alpha, n, data){ n * log(alpha) - (alpha + 1) * sum(log(data)) - sum(data^(-alpha))}
+g <- function(alpha){ll(alpha, n = n, data = data)}
+
+# First derivative of log-likelihood function
+ll_prime <- function(alpha, n, data){ n/alpha - sum(log(data)) + sum(data^(-alpha) * log(data))}
+g_prime <- function(alpha){ll_prime(alpha, n = n, data = data)}
+
+# Second derivative of log-likelihood function
+ll_2prime <- function(alpha, n, data){-n/alpha^2 - sum(data^(-alpha) * log(data)^2)}
+g_2prime <- function(alpha){ll_2prime(alpha, n = n, data = data)}
+
+# Plotting a histogram of the sample data    
+ggplot() + 
+  geom_histogram(aes(x = data), binwidth = 0.1, color = 'black') +
+  labs(title = 'Histogram of the Frechet Sample', x = 'x')  
+```
+
+We then generate a grid to plot the target function and its first derivative.
+From the plot we can see that the maximum should be around $x \approx 2.3$.
+```{r}
+# Generate numbers for the plot
+x_grid <- seq(0.001,10,0.001)
+g_grid <- c()
+g_prime_grid <- c()
+
+for(i in 1:length(x_grid)){
+  g_grid[i] <- g(x_grid[i])
+  g_prime_grid[i] <- g_prime(x_grid[i])
+}  
+
+# Plotting ll and ll prime
+ggplot() +
+  ylim(-500, 100) +
+  geom_line(aes(x = x_grid, y = g_grid, color = 'l(a,x)')) +
+  geom_line(aes(x = x_grid, y = g_prime_grid, color = 'l\'(a,x')) +
+  geom_hline(yintercept = 0) +
+  labs(title = 'Log-likelihood and Derivative', x = 'x', y = 'y') +
+  scale_color_brewer(palette="Dark2")
+```
+
+
+    
+## 2. Bisection Method
+
+First, we have to initilize some starting values.
+```{r}
+# Setting up starting values
+start_time_bisec <- Sys.time() # init time benchmark
+a <- 0.5                       # starting left value
+b <- 4                         # starting right value
+x <- NULL                      # init x
+x[1] <- (b-a) / 2 + a          # starting midpoint
+i <- 1                         # init iterations
+```
+
+We then define the search algorithm.
+```{r}
+# Search algorithm
+while(TRUE){
+  # Check left or right
+  if(g_prime(a) * g_prime(x[i]) < 0){b = x[i]}
+  else                              {a = x[i]}
+  x[i+1] = a + (b-a) / 2
+  
+  # Calculate convergence criteria
+  conv_abs <- abs(x[i+1] - x[i])
+  conv_rel <- abs(x[i+1] - x[i]) / (x[i] + .Machine$double.eps)
+  g_p_x <- g_prime(x[i+1])
+  
+  # Check convergence criteria
+  if(i > 100){print("Max itr reached, no convergence."); break}
+  if(conv_rel < (1 * .Machine$double.eps)){cat("Relative convergence reached at x=", x[i+1]); break}
+  if(conv_abs < (1 * .Machine$double.eps)){cat("Absolute convergence reached at x=", x[i+1]); break}
+  
+  # Increase iterations
+  i <- i + 1
+}
+end_time_bisec <- Sys.time()                     # end time benchmark
+time_bisec <- end_time_bisec - start_time_bisec  # computation time for bisec
+
+# Output
+x_bisec <- x[length(x)]                          # final x value
+y_bisec <- g(x[length(x)])                       # final g(x) value
+prime_bisec <- g_prime(x[length(x)])             # final g' value 
+i_bisec <- i                                     # total iterations
+
+# Absolute convergence, with [1] = NA because diff() drops first element
+eps_bisec <- c(NA, abs(diff(x)))
+```
+
+Finally we plot our results.
+
+```{r}
+# Plotting bisec results
+ggplot() +
+  geom_line(aes(x = 1:length(x), y = x, color = 'x')) +
+  geom_line(aes(x = 1:length(eps_bisec), y = eps_bisec, color = 'abs error')) +
+  xlim(1,52) +
+  labs(title = 'Bisection Results', x = 'Iterations', y = '') +
+  guides(color = guide_legend(reverse = TRUE)) +
+  scale_color_brewer(palette="Dark2")
+```
+
+
+## 3. Newton's Method
+
+Next we use the Newton's method, which should be much faster than the bisection method, because it uses second order information.
+
+First, we have to initialize the starting values.
+```{r}
+start_time_newton <- Sys.time() # init time benchmark
+x_start <- 2.25                 # starting value
+x <- c()                        # reset x
+x[1] <- x_start                 # init x
+i <- 1                          # init iterations
+```
+
+We then define the algorithm.
+
+```{r}
+# Search algorithm
+while(TRUE){
+  x[i+1] <- x[i] - (g_prime(x[i]) / g_2prime(x[i]))
+ 
+  # Calculate convergence criteria
+  conv_abs <- abs(x[i+1] - x[i])
+  conv_rel <- abs(x[i+1] - x[i]) / (x[i] + .Machine$double.eps)
+  g_p_x <- g_prime(x[i+1])
+  
+  # Check convergence criteria
+  if(i > 100){print("Max itr reached, no convergence."); break}
+  if(conv_rel < (1 * .Machine$double.eps)){cat("Relative convergence reached at x=", x[i+1]); break}
+  if(conv_abs < (1 * .Machine$double.eps)){cat("Absolute convergence reached at x=", x[i+1]); break}
+  
+  # Increase iterations
+  i <- i + 1
+}
+end_time_newton <- Sys.time()                      # end time benchmark
+time_newton <- end_time_newton - start_time_newton # computation time for newton
+
+# Output
+x_newton <- x[length(x)]                           # final x value
+y_newton <- g(x[length(x)])                        # final g(x) value
+prime_newton <- g_prime(x[length(x)])              # final g' value 
+i_newton <- i                                      # total iterations
+
+# Absolute convergence, with [1] = NA because diff() drops first element
+eps_newton <- c(NA, abs(diff(x)))
+```
+Finally, we plot the results.
+We can see, that the convergence is much faster with the Newton's method.
+```{r}
+# Plotting newton results
+ggplot() +
+  geom_line(aes(x = 1:length(x), y = x, color = 'x')) +
+  geom_line(aes(x = 1:length(eps_newton), y = eps_newton, color = 'abs error')) +
+  xlim(1,5) +
+  labs(title = 'Newton Results', x = 'Iterations', y = '') +
+  guides(color = guide_legend(reverse = TRUE)) +
+  scale_color_brewer(palette="Dark2")
+```
+
+## 4. Algorithm Comparison 
+
+We now compare the maximum computed, the iterations needed, and the computation time for both methods.
+As we can see, both methods were able to find the maximum. The bisection method needs `52` iterations, while the Newton's method only needs 4 to reach the convergence criteria. Since the task was relatively easy the computation time is almost identical.
+
+```{r}
+# Bisection - format output for readability
+output_bisec <- c(format(round(y_bisec, 2), nsmall = 0), 
+                  format(round(i_bisec, 2), nsmall = 0), 
+                  format(round(time_bisec, 4), nsmall = 0))
+
+# Newton - format output for readability
+output_newton <- c(format(round(y_newton, 2), nsmall = 0), 
+                   format(round(i_newton, 2), nsmall = 0), 
+                   format(round(time_newton, 4), nsmall = 0))
+
+# Model type column
+model_type <- c("Bisection", "Newton")
+
+# Final Output Matrix/Tibble
+output_matrix <- as_tibble(cbind(model_type, rbind(output_bisec, output_newton)))
+names(output_matrix) <- c("Model Type", "Max Value", "Iterations", "Computation Time")
+output_matrix
+
+```
+
+
+# Part II - Integration
+
+We now look at some methods for computational integration.
+
+## 1. Monte Carlo
+
+We start with the simple to implement Monte Carlo integration.  
+  
+For this example we want to find $E(h(X))$ with $h(x) = \frac{x}{1-e^x}$, where X is distributed standard normal.
+
+```{r}
+# Problem definition
+x <- rnorm(50000)    # sample of x, with n = 50,000
+h <- x / (1-exp(x))  # h(x) of sample
+
+# Monte Carlo Estimates
+mu_hat <- mean(h)
+se_mc <- sd(h) / sqrt(50000)
+ci_mc <- c(mu_hat - 1.96*se_mc, mu_hat + 1.96*se_mc)
+
+# Output
+cat("Monte Carlo Estimate of mu is:\n", mu_hat, "\n\n",
+    "Monte Carlo Estimate SE and CI(95%) are:\n", 
+    se_mc, "[", 
+    format(round(ci_mc[1],3), nsmall = 3),",", 
+    format(round(ci_mc[2],3), nsmall = 3), "]",  "\n")
+```
+
+
+## 2. Importance Sampling
+Next we will see how we can use importance sampling for computational integration.  
+  
+For this example we want to find $\sigma^2 = E(X^2)$.  
+The density of X is proportional to $exp(-\frac{|x|^3}{5})$.  
+  
+Since we only have the kernel of the pdf given, we will use standardized weights.
+```{r}
+# Problem definition 
+f <- function(x){exp( -abs(x)^3 / 5)} # define f(x)
+x <- rnorm(50000)                     # draw sample from g(x)
+w_star <- f(x) / dnorm(x)             # compute weights
+
+# Standardize weights, to cancel out c, since only the kernel of the pdf is given
+w <- w_star / sum(w_star)
+
+# Compute sigma squared hat
+sig_sq_hat <- sum(x^2*w)
+
+se_is <- sqrt(sum( w^2 * (f(x) - sig_sq_hat)^2 ))
+ci_is <- c(sig_sq_hat - 1.96*se_is, sig_sq_hat + 1.96*se_is)
+
+# Output
+cat("Importance Sampling Estimate of sigma square is:\n", sig_sq_hat, "\n\n",
+    "Importance Sampling Estimate SE and CI(95%) are:\n", 
+    se_is, "[",
+    format(round(ci_is[1],3), nsmall = 3),",",
+    format(round(ci_is[2],3), nsmall = 3), "]",  "\n")
+```
+
+
+# Part III - MCMC Simulation
+
+In this part we use the Metropolis Hasting algorithm to sample from a Gaussian mixture distribution.
+
+## 1. Set the target function
+
+First we define out target function and the sampling/proposal function.
+
+```{r}
+# Set target function
+target <- function(x){
+  0.2 * dnorm(x, 2, 1.8^2) + 0.8 * dnorm(x, 5, 4^2)
+}
+
+# Set sampling function
+proposed <- function(x){rnorm(1, x, 1.5^2)}
+```
+
+We then define the Metropolis Hasting algorithm.
+
+```{r}
+# Metropolis Hasting function
+metr_hast <- function(x_start){
+  
+  # Set starting value
+  x <- x_start 
+  
+  # Start algorithm loop
+  for(i in 1:5000){
+    x_new <- proposed(x[i])  
+    ratio <- target(x_new) / target(x[i])
+    x[i+1] <- ifelse(runif(1) < ratio, x_new, x[i]) 
+  }
+  
+  # Plot sample histogram and target density
+  plot1 <- ggplot() +
+    geom_histogram(aes(x = x, y = ..density..), color = 'black', fill = 'gray', bins = 50) +
+    geom_function(fun = target, color = 'brown1', size = 0.8) +
+    labs(title = 'Metropolis-Hastings - Sample Hist and Target Density', y = 'density', x = 'x')
+  
+  # Plot path of x
+  plot2 <- ggplot() +
+    geom_line(aes(x = 1:length(x), y = x)) +
+    labs(title = 'Metropolis-Hastings - Path of x', x = 'iterations', y = 'x')
+  
+  # Output of function
+  output <- list(x, plot1, plot2)
+  
+  return(output)
+}
+```
+
+It is always a good idea to use different starting values for most numerical optimization and integration/simulation algorithms.
+This is because there is a chance that the algorithm gets stuck in a local optimum or neighborhood, that depends on the starting values.
+
+We therefor use different starting values.
+```{r}
+# Store MH runs with different starting values (0, 4, 10)
+mh_start_0 <- metr_hast(0)
+mh_start_4 <- metr_hast(4)
+mh_start_10 <- metr_hast(10)
+```
+
+## 2. Results
+### Plot Path of x
+```{r}
+# Plot path of x
+mh_start_0[3]
+mh_start_4[3]
+mh_start_10[3]
+```
+
+
+### Plot Sample Hist and Target Density
+```{r}
+# Plot sample hist and target density
+mh_start_0[2]
+mh_start_4[2]
+mh_start_10[2]
+```
+
+
+## 3. Improve the MH MCMC
+
+From the plot we can see that the sample distribution is not optimal.
+We can widen the variance of the proposal distribution to explore a greater range of the target function.
+
+```{r}
+# Widen variance of proposal distribution to explore quicker
+proposed <- function(x){rnorm(1, x, 3^2)}
+
+# Store MH runs with different starting values (0, 4, 10)
+mh2_start_0 <- metr_hast(0)
+mh2_start_4 <- metr_hast(4)
+mh2_start_10 <- metr_hast(10)
+```
+
+
+### Plot Path of x
+```{r}
+# Plot path of x
+mh2_start_0[3]
+mh2_start_4[3]
+mh2_start_10[3]
+```
+
+### Plot Sample Hist and Target Density
+```{r}
+# Plot sample hist and target density
+mh2_start_0[2]
+mh2_start_4[2]
+mh2_start_10[2]
+```
+  
+As we can see from the plots, now the sample distribution fits much closer to the target distribution.
+  
+  
+  
