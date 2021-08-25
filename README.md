@@ -1,4 +1,4 @@
-# statistical_computing
+# Statistical Computing
 
 Here you can find some tools for statistical computing.
 
