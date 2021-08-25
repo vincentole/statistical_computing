@@ -1,6 +1,6 @@
 # statistical_computing
 
-Here you can find some tools for statistical computation.
+Here you can find some tools for statistical computing.
 
 I demonstrate how you can build algorithms for optimization, integration and simulation from scratch.
 
